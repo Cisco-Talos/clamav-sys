@@ -2,6 +2,7 @@
 authors = [
     "Jonas Zaddach <jzaddach@cisco.com>",
     "Scott Hutton <schutton@cisco.com>",
+    "Valerie Snyder <valsnyde@cisco.com>",
 ]
 categories = ["external-ffi-bindings"]
 description = "ClamAV low level bindings for Rust"
@@ -10,7 +11,7 @@ homepage = "https://github.com/Cisco-Talos/clamav-sys/"
 license = "GPL-2.0"
 name = "clamav-sys"
 repository = "https://github.com/Cisco-Talos/clamav-sys/"
-version = "1.0.0"
+version = "1.5.0"
 
 [build-dependencies]
 bindgen = "0.64.0"
