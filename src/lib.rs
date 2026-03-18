@@ -88,11 +88,11 @@ impl From<cl_error_t> for u32 {
 impl std::fmt::Display for cl_error_t {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         unsafe {
-            #[cfg(windows)]
-            let msg = CStr::from_ptr(cl_strerror(i32::from(*self)));
-
-            #[cfg(not(windows))]
+            #[cfg(clamav_ge_1_0_0)]
             let msg = CStr::from_ptr(cl_strerror(*self));
+
+            #[cfg(not(clamav_ge_1_0_0))]
+            let msg = CStr::from_ptr(cl_strerror(i32::from(*self)));
 
             f.write_str(msg.to_str().unwrap_or("<unknown ClamAV error>"))
         }

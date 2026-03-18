@@ -17,6 +17,7 @@
 // MA 02110-1301, USA.
 
 use std::env;
+use std::fs;
 use std::path::PathBuf;
 
 // Generate bindings for these functions:
@@ -134,6 +135,8 @@ const BINDGEN_CONSTANTS: &[&str] = &[
     "LAYER_ATTRIBUTES_.*",
 ];
 
+const CLAMAV_VERSION_1_0_0: u32 = 0x010000;
+
 fn bindgen_with_include_paths(
     mut bindings: bindgen::Builder,
     include_paths: &[PathBuf],
@@ -151,6 +154,39 @@ fn env_paths(name: &str) -> Option<Vec<PathBuf>> {
     let value = env::var_os(name)?;
     let paths = env::split_paths(&value).collect::<Vec<_>>();
     Some(paths)
+}
+
+fn parse_preprocessor_integer(value: &str) -> Option<u32> {
+    let value = value.trim();
+    if let Some(hex) = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+    {
+        u32::from_str_radix(hex, 16).ok()
+    } else {
+        value.parse().ok()
+    }
+}
+
+fn detect_clamav_version_num(include_paths: &[PathBuf]) -> Option<u32> {
+    for include_path in include_paths {
+        for header_name in ["clamav.h", "clamav-version.h"] {
+            let header_path = include_path.join(header_name);
+            let Ok(header) = fs::read_to_string(&header_path) else {
+                continue;
+            };
+            println!("cargo:rerun-if-changed={}", header_path.display());
+
+            for line in header.lines() {
+                let line = line.trim();
+                if let Some(version) = line.strip_prefix("#define CLAMAV_VERSION_NUM") {
+                    return parse_preprocessor_integer(version);
+                }
+            }
+        }
+    }
+
+    None
 }
 
 fn validate_manual_clamav_configuration() -> bool {
@@ -285,6 +321,7 @@ fn cargo_common() {
     println!("cargo:rerun-if-env-changed=CLAMAV_INCLUDE");
     println!("cargo:rerun-if-env-changed=CLAMAV_STATIC");
     println!("cargo:rerun-if-env-changed=OPENSSL_INCLUDE");
+    println!("cargo:rustc-check-cfg=cfg(clamav_ge_1_0_0)");
 }
 
 #[cfg(unix)]
@@ -321,6 +358,12 @@ fn main() {
     }
 
     cargo_common();
+
+    let clamav_version_num = detect_clamav_version_num(&include_paths)
+        .expect("Unable to determine CLAMAV_VERSION_NUM from clamav.h");
+    if clamav_version_num >= CLAMAV_VERSION_1_0_0 {
+        println!("cargo:rustc-cfg=clamav_ge_1_0_0");
+    }
 
     generate_bindings(&|x: bindgen::Builder| -> bindgen::Builder {
         bindgen_with_include_paths(x, &include_paths)
