@@ -17,6 +17,7 @@
 // MA 02110-1301, USA.
 
 use std::env;
+use std::fs;
 use std::path::PathBuf;
 
 // Generate bindings for these functions:
@@ -84,6 +85,30 @@ const BINDGEN_FUNCTIONS: &[&str] = &[
     "cli_versig2",
     "cli_warnmsg",
     "lsig_increment_subsig_match",
+    "cl_cvdunpack_ex",
+    "cl_cvdverify_ex",
+    "cl_scandesc_ex",
+    "cl_scanmap_ex",
+    "cl_scanfile_ex",
+    "cl_fmap_set_name",
+    "cl_fmap_get_name",
+    "cl_fmap_set_path",
+    "cl_fmap_get_path",
+    "cl_fmap_get_fd",
+    "cl_fmap_get_size",
+    "cl_fmap_set_hash",
+    "cl_fmap_have_hash",
+    "cl_fmap_will_need_hash_later",
+    "cl_fmap_get_hash",
+    "cl_fmap_get_data",
+    "cl_scan_layer_get_fmap",
+    "cl_scan_layer_get_parent_layer",
+    "cl_scan_layer_get_type",
+    "cl_scan_layer_get_recursion_level",
+    "cl_scan_layer_get_object_id",
+    "cl_scan_layer_get_last_alert",
+    "cl_scan_layer_get_attributes",
+    "cl_engine_set_scan_callback",
 ];
 
 // Generate bindings for these types (structs, prototypes, etc.):
@@ -110,7 +135,143 @@ const BINDGEN_CONSTANTS: &[&str] = &[
     "LAYER_ATTRIBUTES_.*",
 ];
 
-const CLAMAV_LIBRARY_NAME: &str = "clamav";
+const CLAMAV_VERSION_1_0_0: u32 = 0x010000;
+
+fn bindgen_with_include_paths(
+    mut bindings: bindgen::Builder,
+    include_paths: &[PathBuf],
+) -> bindgen::Builder {
+    for include_path in include_paths {
+        bindings = bindings
+            .clang_arg("-I")
+            .clang_arg(include_path.to_string_lossy().as_ref());
+    }
+
+    bindings
+}
+
+fn env_paths(name: &str) -> Option<Vec<PathBuf>> {
+    let value = env::var_os(name)?;
+    let paths = env::split_paths(&value).collect::<Vec<_>>();
+    Some(paths)
+}
+
+fn parse_preprocessor_integer(value: &str) -> Option<u32> {
+    let value = value.trim();
+    if let Some(hex) = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+    {
+        u32::from_str_radix(hex, 16).ok()
+    } else {
+        value.parse().ok()
+    }
+}
+
+fn detect_clamav_version_num(include_paths: &[PathBuf]) -> Option<u32> {
+    for include_path in include_paths {
+        for header_name in ["clamav.h", "clamav-version.h"] {
+            let header_path = include_path.join(header_name);
+            let Ok(header) = fs::read_to_string(&header_path) else {
+                continue;
+            };
+            println!("cargo:rerun-if-changed={}", header_path.display());
+
+            for line in header.lines() {
+                let line = line.trim();
+                if let Some(version) = line.strip_prefix("#define CLAMAV_VERSION_NUM") {
+                    return parse_preprocessor_integer(version);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn validate_manual_clamav_configuration() -> bool {
+    let has_library = env::var_os("CLAMAV_LIBRARY").is_some();
+    let has_include = env::var_os("CLAMAV_INCLUDE").is_some();
+
+    match (has_library, has_include) {
+        (false, false) => false,
+        (true, true) => true,
+        (true, false) => {
+            panic!("CLAMAV_INCLUDE must also be set when CLAMAV_LIBRARY is provided")
+        }
+        (false, true) => {
+            panic!("CLAMAV_LIBRARY must also be set when CLAMAV_INCLUDE is provided")
+        }
+    }
+}
+
+#[cfg(windows)]
+fn clamav_link_kind() -> &'static str {
+    match env::var("CLAMAV_STATIC").as_deref() {
+        Ok("1") => "static",
+        Ok(_) | Err(env::VarError::NotPresent) => "dylib",
+        Err(env::VarError::NotUnicode(_)) => {
+            panic!("CLAMAV_STATIC must be valid Unicode when set")
+        }
+    }
+}
+
+#[cfg(windows)]
+fn clamav_link_name(library_path: &std::path::Path) -> String {
+    let file_name = library_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("CLAMAV_LIBRARY must point to a valid library filename");
+
+    file_name
+        .strip_suffix(".lib")
+        .expect("CLAMAV_LIBRARY must point to a .lib file on Windows")
+        .to_string()
+}
+
+#[cfg(windows)]
+fn configure_manual_clamav_library() {
+    let library_path =
+        PathBuf::from(env::var_os("CLAMAV_LIBRARY").expect(
+            "CLAMAV_LIBRARY environment variable must be set when using manual ClamAV paths",
+        ));
+    let library_dir = library_path
+        .parent()
+        .expect("CLAMAV_LIBRARY must include a parent directory");
+    let library_kind = clamav_link_kind();
+    let library_name = clamav_link_name(&library_path);
+
+    println!(
+        "cargo:rustc-link-search=native={}",
+        library_dir.to_str().unwrap()
+    );
+    println!("cargo:rustc-link-lib={library_kind}={library_name}");
+}
+
+#[cfg(not(windows))]
+fn configure_manual_clamav_library() {
+    let library_path =
+        PathBuf::from(env::var_os("CLAMAV_LIBRARY").expect(
+            "CLAMAV_LIBRARY environment variable must be set when using manual ClamAV paths",
+        ));
+    let library_dir = library_path
+        .parent()
+        .expect("CLAMAV_LIBRARY must include a parent directory");
+
+    println!(
+        "cargo:rustc-link-search=native={}",
+        library_dir.to_str().unwrap()
+    );
+    println!("cargo:rustc-link-lib=dylib=clamav");
+}
+
+fn probe_from_env() -> Option<Vec<PathBuf>> {
+    configure_manual_clamav_library();
+    let include_paths = env_paths("CLAMAV_INCLUDE")
+        .expect("CLAMAV_INCLUDE environment variable must be set when using manual ClamAV paths");
+
+    Some(include_paths)
+}
 
 fn generate_bindings(customize_bindings: &dyn Fn(bindgen::Builder) -> bindgen::Builder) {
     let mut bindings = bindgen::Builder::default();
@@ -132,6 +293,9 @@ fn generate_bindings(customize_bindings: &dyn Fn(bindgen::Builder) -> bindgen::B
 
     bindings = bindings
         .header("wrapper.h")
+        // C doc comments can contain prose that rustdoc interprets as doctest code.
+        // Suppress generated comments so `cargo test` does not fail on invalid doctests.
+        .generate_comments(false)
         // Tell cargo to invalidate the built crate whenever any of the
         // included header files changed.
         .parse_callbacks(Box::new(bindgen::CargoCallbacks));
@@ -151,76 +315,57 @@ fn generate_bindings(customize_bindings: &dyn Fn(bindgen::Builder) -> bindgen::B
 }
 
 fn cargo_common() {
-    println!("cargo:rustc-link-lib=dylib={}", CLAMAV_LIBRARY_NAME);
-
     // Tell cargo to invalidate the built crate whenever the wrapper changes
     println!("cargo:rerun-if-changed=wrapper.h");
-}
-
-#[cfg(windows)]
-fn main() {
-    let include_paths = match vcpkg::find_package("clamav") {
-        Ok(pkg) => pkg.include_paths,
-        Err(err) => {
-            println!(
-                "cargo:warning=Either vcpkg is not installed, or an error occurred in vcpkg: {}",
-                err
-            );
-            let clamav_source = PathBuf::from(env::var("CLAMAV_SOURCE").expect("CLAMAV_SOURCE environment variable must be set and point to ClamAV's source directory"));
-            let clamav_build = PathBuf::from(env::var("CLAMAV_BUILD").expect("CLAMAV_BUILD environment variable must be set and point to ClamAV's build directory"));
-            let openssl_include = PathBuf::from(env::var("OPENSSL_INCLUDE").expect("OPENSSL_INCLUDE environment variable must be set and point to openssl's include directory"));
-            let profile = env::var("PROFILE").unwrap();
-
-            let library_path = match profile.as_str() {
-                "debug" => std::path::Path::new(&clamav_build).join("libclamav/Debug"),
-                "release" => std::path::Path::new(&clamav_build).join("libclamav/Release"),
-                _ => panic!("Unexpected build profile"),
-            };
-
-            println!(
-                "cargo:rustc-link-search=native={}",
-                library_path.to_str().unwrap()
-            );
-
-            vec![
-                clamav_source.join("libclamav"),
-                clamav_build,
-                openssl_include,
-            ]
-        }
-    };
-
-    cargo_common();
-    generate_bindings(&|x: bindgen::Builder| -> bindgen::Builder {
-        let mut x = x;
-        for include_path in &include_paths {
-            x = x.clang_arg("-I").clang_arg(include_path.to_str().unwrap());
-        }
-        x
-    });
+    println!("cargo:rerun-if-env-changed=CLAMAV_LIBRARY");
+    println!("cargo:rerun-if-env-changed=CLAMAV_INCLUDE");
+    println!("cargo:rerun-if-env-changed=CLAMAV_STATIC");
+    println!("cargo:rerun-if-env-changed=OPENSSL_INCLUDE");
+    println!("cargo:rustc-check-cfg=cfg(clamav_ge_1_0_0)");
 }
 
 #[cfg(unix)]
-fn main() {
-    let libclamav = pkg_config::Config::new()
-        .atleast_version("0.103")
+fn probe_system_include_paths() -> Vec<PathBuf> {
+    pkg_config::Config::new()
+        .atleast_version("1.5")
         .probe("libclamav")
-        .unwrap();
+        .unwrap()
+        .include_paths
+}
 
-    let mut include_paths = libclamav.include_paths;
+#[cfg(windows)]
+fn probe_system_include_paths() -> Vec<PathBuf> {
+    vcpkg::find_package("clamav")
+        .unwrap_or_else(|err| panic!("Failed to locate ClamAV with vcpkg: {err}"))
+        .include_paths
+}
 
-    if let Some(val) = std::env::var_os("OPENSSL_ROOT_DIR") {
-        let mut openssl_include_dir = PathBuf::from(val);
-        openssl_include_dir.push("include");
-        include_paths.push(openssl_include_dir);
+#[cfg(not(any(unix, windows)))]
+fn probe_system_include_paths() -> Vec<PathBuf> {
+    panic!("Unsupported platform")
+}
+
+fn main() {
+    let use_manual_clamav = validate_manual_clamav_configuration();
+    let mut include_paths = if use_manual_clamav {
+        probe_from_env().expect("manual ClamAV configuration should provide include paths")
+    } else {
+        probe_system_include_paths()
+    };
+
+    if let Some(openssl_include_paths) = env_paths("OPENSSL_INCLUDE") {
+        include_paths.extend(openssl_include_paths);
     }
 
     cargo_common();
+
+    let clamav_version_num = detect_clamav_version_num(&include_paths)
+        .expect("Unable to determine CLAMAV_VERSION_NUM from clamav.h");
+    if clamav_version_num >= CLAMAV_VERSION_1_0_0 {
+        println!("cargo:rustc-cfg=clamav_ge_1_0_0");
+    }
+
     generate_bindings(&|x: bindgen::Builder| -> bindgen::Builder {
-        let mut x = x;
-        for include_path in &include_paths {
-            x = x.clang_arg("-I").clang_arg(include_path.to_str().unwrap());
-        }
-        x
+        bindgen_with_include_paths(x, &include_paths)
     });
 }

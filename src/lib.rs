@@ -58,64 +58,73 @@ impl PartialEq for cl_scan_options {
     }
 }
 
-/// We need this for Windows, MSVC will use an `i32` as underlying enum type instead of `u32` like
-/// gcc and clang.
 impl From<i32> for cl_error_t {
     fn from(val: i32) -> cl_error_t {
-        unsafe { cl_error_t(std::mem::transmute(val)) }
+        cl_error_t(val as _)
     }
 }
 
 impl From<u32> for cl_error_t {
     fn from(val: u32) -> cl_error_t {
-        cl_error_t(val)
+        cl_error_t(
+            val.try_into()
+                .expect("cl_error_t values must fit in the platform enum representation"),
+        )
     }
 }
 
 impl From<cl_error_t> for i32 {
     fn from(val: cl_error_t) -> i32 {
-        unsafe { std::mem::transmute(val.0) }
+        val.0 as i32
     }
 }
 
 impl From<cl_error_t> for u32 {
     fn from(val: cl_error_t) -> u32 {
-        val.0
+        val.0.try_into().expect("cl_error_t values must fit in u32")
     }
 }
 
 impl std::fmt::Display for cl_error_t {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         unsafe {
+            #[cfg(clamav_ge_1_0_0)]
             let msg = CStr::from_ptr(cl_strerror(*self));
+
+            #[cfg(not(clamav_ge_1_0_0))]
+            let msg = CStr::from_ptr(cl_strerror(i32::from(*self)));
+
             f.write_str(msg.to_str().unwrap_or("<unknown ClamAV error>"))
         }
     }
 }
 
-/// We need this for Windows, MSVC will use an `i32` as underlying enum type instead of `u32` like
-/// gcc and clang.
 impl From<i32> for cl_engine_field {
     fn from(val: i32) -> cl_engine_field {
-        unsafe { cl_engine_field(std::mem::transmute(val)) }
+        cl_engine_field(val as _)
     }
 }
 
 impl From<u32> for cl_engine_field {
     fn from(val: u32) -> cl_engine_field {
-        cl_engine_field(val)
+        cl_engine_field(
+            val.try_into()
+                .expect("cl_engine_field values must fit in the platform enum representation"),
+        )
     }
 }
 
 impl From<cl_engine_field> for i32 {
     fn from(val: cl_engine_field) -> i32 {
-        unsafe { std::mem::transmute(val.0) }
+        val.0 as i32
     }
 }
 
 impl From<cl_engine_field> for u32 {
     fn from(val: cl_engine_field) -> u32 {
         val.0
+            .try_into()
+            .expect("cl_engine_field values must fit in u32")
     }
 }
 
@@ -125,29 +134,30 @@ impl std::fmt::Display for cl_engine_field {
     }
 }
 
-/// We need this for Windows, MSVC will use an `i32` as underlying enum type instead of `u32` like
-/// gcc and clang.
 impl From<i32> for cl_msg {
     fn from(val: i32) -> cl_msg {
-        unsafe { cl_msg(std::mem::transmute(val)) }
+        cl_msg(val as _)
     }
 }
 
 impl From<u32> for cl_msg {
     fn from(val: u32) -> cl_msg {
-        cl_msg(val)
+        cl_msg(
+            val.try_into()
+                .expect("cl_msg values must fit in the platform enum representation"),
+        )
     }
 }
 
 impl From<cl_msg> for i32 {
     fn from(val: cl_msg) -> i32 {
-        unsafe { std::mem::transmute(val.0) }
+        val.0 as i32
     }
 }
 
 impl From<cl_msg> for u32 {
     fn from(val: cl_msg) -> u32 {
-        val.0
+        val.0.try_into().expect("cl_msg values must fit in u32")
     }
 }
 
